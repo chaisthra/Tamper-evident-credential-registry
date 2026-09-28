@@ -12,7 +12,7 @@ I used **Claude Code** (Anthropic, `claude.ai/code`), an AI coding agent that wo
 | 2 | Claude Code | Write the code with a comment on every line explaining what it is and why it is there | `CredentialRegistry.sol`, `deploy.js`, the Python client (`config`, `models`, `hashing`, `chain`, `domain`, `cli`), 15 tests, the demo script and sample PDFs | Asked for the per-line comments so that I can explain each line in the viva. Reviewed the issuer-only revocation rule (`NotIssuer`) and kept it |
 | 3 | Claude Code | Run it and prove it works | Ran `make test` and the full demo on a fresh clone against a local Hardhat node | None. I re-ran `make test` and `make demo` on my own machine |
 | 4 | Claude Code | Add the Merkle-cohort stretch goal | `Sha256Merkle.sol`, batch functions in the registry, `client/merkle.py`, `client/cohort.py`, CLI `issue-cohort` and `--bundle`, 2 contract tests + 1 client test, `demo_cohort.sh` | Kept the test total at 15 (the M7 cap) by merging two pairs of related negative tests |
-| 5 | Claude Code | Write DESIGN.md, this file, and the 7-slide deck | The documents and `MiniProject_Name_Roll.pptx` / `.pdf` | Filled in my name and roll number. Rewrote the speaker notes in my own words |
+| 5 | Claude Code | Write DESIGN.md, this file, and the 7-slide deck | The documents and `MiniProject_ChaithraN_25MTRCY008.pptx` / `.pdf` | Filled in my name and roll number. Rewrote the speaker notes in my own words |
 
 ## Things the AI got wrong (and how they were caught)
 
