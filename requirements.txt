@@ -1,0 +1,3 @@
+# Python client dependencies (install with: pip install -r requirements.txt)
+web3>=6.15,<8    # Ethereum client library - imported only in client/chain.py
+pytest>=7,<9     # Test runner for tests/client

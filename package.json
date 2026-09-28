@@ -1,0 +1,15 @@
+{
+  "name": "tamper-evident-credential-registry",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tamper-evident credential registry - Blockchain Technologies mini project",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@openzeppelin/contracts": "^5.1.0",
+    "hardhat": "^2.22.0"
+  }
+}
