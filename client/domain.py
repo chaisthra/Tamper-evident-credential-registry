@@ -45,7 +45,13 @@ def verify_credential(  # Anyone's action; costs nothing because it is a read.
     Returns a VerificationResult; never raises for a missing record (that is NOT_REGISTERED).
     """  # Docstring: inputs, output, behaviour on unknown documents.
     doc_hash = hashing.sha256_file(pdf)  # One changed byte gives a completely different hash.
-    record = chain.get_record(doc_hash)  # Free on-chain read.
+    return result_from_record(doc_hash, chain.get_record(doc_hash), student_id, salt)  # Free read, then interpret.
+
+
+def result_from_record(
+    doc_hash: bytes, record: OnChainRecord, student_id: Optional[str], salt: Optional[bytes]
+) -> VerificationResult:  # Shared by single-credential and cohort verification.
+    """Turn an on-chain record into a VerificationResult, including the optional ownership check."""  # Contract.
     outcome = _STATUS_TO_OUTCOME[record.status]  # Map contract state to a human answer.
     if outcome is Outcome.NOT_REGISTERED:  # Nothing on-chain for this file.
         return VerificationResult(outcome, doc_hash, None, None)  # No record, nothing to compare.

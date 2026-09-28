@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass  # Generates __init__/__eq__ for simple record classes.
 from enum import Enum, IntEnum  # Enum for named outcomes; IntEnum for values that come back from the chain as ints.
-from typing import Optional  # Marks fields that may be None.
+from typing import List, Optional  # List for proofs; Optional marks fields that may be None.
 
 
 class Status(IntEnum):  # Mirrors the Solidity `Status` enum; IntEnum so Status(1) works on raw chain output.
@@ -58,3 +58,13 @@ class VerificationResult:  # What `verify` returns to the CLI.
     doc_hash: bytes  # Hash of the file that was checked.
     record: Optional[OnChainRecord]  # The on-chain record, or None if not registered.
     subject_match: Optional[bool]  # True/False if a student id + salt were supplied, else None.
+
+
+@dataclass(frozen=True)  # Immutable.
+class BatchMember:  # Everything needed to check one cohort member on-chain (the "proof bundle" minus the salt).
+    """One cohort member: the cohort root, the member's two hashes, and the Merkle proof linking them."""  # Purpose.
+
+    root: bytes  # Merkle root stored on-chain for the cohort.
+    doc_hash: bytes  # SHA-256 of the member's PDF.
+    subject_hash: bytes  # Salted student-id hash.
+    proof: List[bytes]  # Sibling hashes from leaf to root.

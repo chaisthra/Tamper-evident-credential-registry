@@ -1,11 +1,13 @@
-# One entry point for every task. Usage: make install | compile | test | node | deploy | demo
+# One entry point for every task. Usage: make install | compile | test | node | deploy | demo | demo-cohort
 
 -include .env      # Load local settings if a .env exists (optional; defaults live in client/config.py).
 export             # Pass those variables on to npx and python.
 
-PYTHON ?= python3  # Python interpreter; override with `make PYTHON=python` on Windows.
+# Python interpreter; override with `make PYTHON=python` on Windows. (Comment on its own line: a trailing
+# comment would leave spaces inside the variable's value.)
+PYTHON ?= python3
 
-.PHONY: install compile test node deploy demo clean  # These are commands, not files.
+.PHONY: install compile test node deploy demo demo-cohort clean  # These are commands, not files.
 
 install:  ## Install JavaScript and Python dependencies.
 	npm install                                  # Hardhat, OpenZeppelin, test tooling.
@@ -26,6 +28,9 @@ deploy: compile  ## Deploy a fresh registry to the running local node.
 
 demo: deploy  ## Fresh deployment, then the scripted end-to-end demo.
 	bash scripts/demo.sh
+
+demo-cohort: deploy  ## Fresh deployment, then the Merkle cohort (stretch goal) demo.
+	bash scripts/demo_cohort.sh
 
 clean:  ## Remove build output.
 	rm -rf artifacts cache deployments build

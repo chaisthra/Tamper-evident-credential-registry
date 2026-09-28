@@ -28,6 +28,12 @@ def _error_selectors(abi: list) -> dict:  # Builds a lookup to turn revert data 
     return selectors  # Filled lookup table.
 
 
+def _to_record(raw) -> OnChainRecord:  # Shared by the single and cohort read paths.
+    """Convert the Credential tuple returned by the contract into an OnChainRecord."""  # Contract.
+    subject, issuer, issued_at, revoked_at, status = raw  # Unpack in struct field order.
+    return OnChainRecord(bytes(subject), issuer, issued_at, revoked_at, Status(status))  # Plain Python types.
+
+
 class RegistryChain:  # Adapter: wraps web3 calls behind a small, testable interface.
     """Connects to the deployed CredentialRegistry and exposes issue / revoke / get_record."""  # Class purpose.
 
@@ -55,8 +61,23 @@ class RegistryChain:  # Adapter: wraps web3 calls behind a small, testable inter
 
     def get_record(self, doc_hash: bytes) -> OnChainRecord:  # On-chain read (free, no transaction).
         """Return the stored record for doc_hash; status is NONE if it was never issued."""  # Contract.
-        subject, issuer, issued_at, revoked_at, status = self._contract.functions.verify(doc_hash).call()  # Struct -> tuple.
-        return OnChainRecord(bytes(subject), issuer, issued_at, revoked_at, Status(status))  # Convert to plain types.
+        return _to_record(self._contract.functions.verify(doc_hash).call())  # Struct comes back as a tuple.
+
+    def issue_batch(self, root: bytes, size: int, actor: str) -> str:  # Cohort write: one tx for many students.
+        """Send issueBatch(root, size) from `actor`. Returns the tx hash. Raises RegistryError on revert."""  # Contract.
+        return self._send(self._contract.functions.issueBatch(root, size), actor)  # Build call, then send.
+
+    def revoke_batch_member(self, member, reason: bytes, actor: str) -> str:  # Revoke one cohort member.
+        """Send revokeBatchMember for a BatchMember. Returns the tx hash. Raises RegistryError on revert."""  # Contract.
+        fn = self._contract.functions.revokeBatchMember(  # Build the call...
+            member.root, member.doc_hash, member.subject_hash, member.proof, reason  # ...with the member's evidence.
+        )  # end of call construction
+        return self._send(fn, actor)  # Send it.
+
+    def get_batch_record(self, member) -> OnChainRecord:  # Cohort read (free).
+        """Return the record for a BatchMember; status NONE if the root is unknown or the proof fails."""  # Contract.
+        fn = self._contract.functions.verifyBatchMember(member.root, member.doc_hash, member.subject_hash, member.proof)  # Call.
+        return _to_record(fn.call())  # Same tuple shape as verify().
 
     def _send(self, fn, actor: str) -> str:  # Shared transaction path for issue and revoke.
         """Transact `fn` from `actor` and wait for mining. Returns tx hash hex. Raises RegistryError on revert."""  # Contract.

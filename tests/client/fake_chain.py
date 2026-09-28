@@ -1,5 +1,6 @@
 """In-memory stand-in for the chain, so domain tests run with no node and are fully deterministic."""  # Purpose.
 
+from client import merkle  # Same proof check the contract performs.
 from client.models import OnChainRecord, RegistryError, Status  # Same plain types the real adapter returns.
 
 EMPTY = OnChainRecord(b"\x00" * 32, "0x" + "00" * 20, 0, 0, Status.NONE)  # What the contract returns for an unknown hash.
@@ -13,6 +14,8 @@ class FakeChain:  # Implements the domain's ChainPort interface with a dict.
     def __init__(self) -> None:  # Starts empty.
         """Create an empty registry."""  # Contract.
         self.records = {}  # doc_hash -> OnChainRecord.
+        self.batches = {}  # Merkle root -> issuer actor.
+        self.revoked_leaves = set()  # (root, leaf) pairs that were revoked.
 
     def issue(self, doc_hash: bytes, subject_hash: bytes, actor: str) -> str:  # Same signature as RegistryChain.issue.
         """Store a VALID record; raise RegistryError like the contract would."""  # Contract.
@@ -36,3 +39,27 @@ class FakeChain:  # Implements the domain's ChainPort interface with a dict.
     def get_record(self, doc_hash: bytes) -> OnChainRecord:  # Same signature as RegistryChain.get_record.
         """Return the record, or the all-zero NONE record if unknown."""  # Contract.
         return self.records.get(doc_hash, EMPTY)  # Default mirrors Solidity's zeroed storage.
+
+    def issue_batch(self, root: bytes, size: int, actor: str) -> str:  # Same signature as RegistryChain.issue_batch.
+        """Store a cohort root; raise RegistryError like the contract would."""  # Contract.
+        if actor not in REGISTRARS:  # Role check.
+            raise RegistryError("AccessControlUnauthorizedAccount")  # Refuse.
+        self.batches[root] = actor  # Remember who issued it.
+        return "0xfake"  # Placeholder tx hash.
+
+    def revoke_batch_member(self, member, reason: bytes, actor: str) -> str:  # Same signature as the real adapter.
+        """Revoke one cohort leaf if the proof is valid."""  # Contract.
+        leaf = merkle.leaf_hash(member.doc_hash, member.subject_hash)  # Rebuild the leaf.
+        if not merkle.verify_proof(member.proof, member.root, leaf):  # Must be a real member.
+            raise RegistryError("InvalidProof")  # Same name as the contract error.
+        self.revoked_leaves.add((member.root, leaf))  # Mark revoked.
+        return "0xfake"  # Placeholder tx hash.
+
+    def get_batch_record(self, member) -> OnChainRecord:  # Same signature as the real adapter.
+        """Return VALID/REVOKED for a proven member, else the NONE record."""  # Contract.
+        leaf = merkle.leaf_hash(member.doc_hash, member.subject_hash)  # Rebuild the leaf.
+        if member.root not in self.batches or not merkle.verify_proof(member.proof, member.root, leaf):  # Not a member.
+            return EMPTY  # Reads like an unknown document.
+        revoked = (member.root, leaf) in self.revoked_leaves  # Was this leaf revoked?
+        status = Status.REVOKED if revoked else Status.VALID  # Derive status.
+        return OnChainRecord(member.subject_hash, self.batches[member.root], FAKE_TIME, FAKE_TIME if revoked else 0, status)  # Record.

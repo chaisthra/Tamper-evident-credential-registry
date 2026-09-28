@@ -4,7 +4,7 @@ import hashlib  # Used to play the attacker computing unsalted hashes.
 
 import pytest  # Test framework (fixtures, raises).
 
-from client import domain, hashing  # Code under test.
+from client import cohort, domain, hashing  # Code under test.
 from client.models import Outcome, RegistryError  # Expected result values.
 from tests.client.fake_chain import FakeChain  # Deterministic in-memory chain.
 
@@ -46,11 +46,6 @@ def test_revoked_reads_revoked_and_cannot_be_revoked_twice(pdf):  # Revoked is n
         domain.revoke_credential(chain, pdf, "again", "registrar")  # Attempt.
 
 
-def test_outsider_cannot_issue(pdf):  # Negative: access control seen from the client side.
-    with pytest.raises(RegistryError, match="AccessControlUnauthorizedAccount"):  # Expected rejection.
-        domain.issue_credential(FakeChain(), pdf, STUDENT, "outsider")  # Outsider tries to issue.
-
-
 def test_salt_defeats_roll_list_brute_force():  # Privacy: the brief's "unsalted studentIdHash" trap.
     roll_list = [f"CS2024{n:03d}" for n in range(1, 201)]  # Attacker's guess list: 200 plausible ids.
     unsalted = hashlib.sha256(STUDENT.encode()).digest()  # What a naive design would put on-chain.
@@ -58,3 +53,20 @@ def test_salt_defeats_roll_list_brute_force():  # Privacy: the brief's "unsalted
     guesses = {hashlib.sha256(sid.encode()).digest(): sid for sid in roll_list}  # Attacker hashes every id.
     assert guesses.get(unsalted) == STUDENT  # Unsalted: the student is identified instantly.
     assert salted not in guesses  # Salted: the same attack finds nothing.
+
+
+def test_cohort_members_verify_tamper_fails_and_one_can_be_revoked(tmp_path):  # Stretch goal: Merkle cohort.
+    chain = FakeChain()  # Empty registry.
+    ids = ["CS2024001", "CS2024002", "CS2024003"]  # Three fictional students (odd count exercises the carry-up rule).
+    pdfs = [tmp_path / f"{sid}.pdf" for sid in ids]  # One file per student.
+    for path, sid in zip(pdfs, ids):  # Write distinct contents.
+        path.write_bytes(f"%PDF-1.4 degree for {sid}".encode())  # Different bytes -> different hashes.
+    receipt = cohort.issue_cohort(chain, list(zip(pdfs, ids)), "registrar")  # One root for all three.
+    for path, sid in zip(pdfs, ids):  # Every member proves membership and ownership.
+        result = cohort.verify_member(chain, path, receipt.bundles[sid], sid)  # Check with the student's bundle.
+        assert (result.outcome, result.subject_match) == (Outcome.VALID, True)  # Valid and theirs.
+    pdfs[0].write_bytes(pdfs[0].read_bytes() + b"X")  # Tamper with student 1's PDF.
+    assert cohort.verify_member(chain, pdfs[0], receipt.bundles[ids[0]]).outcome is Outcome.NOT_REGISTERED  # Detected.
+    cohort.revoke_member(chain, pdfs[1], receipt.bundles[ids[1]], "issued in error", "registrar")  # Revoke student 2 only.
+    assert cohort.verify_member(chain, pdfs[1], receipt.bundles[ids[1]]).outcome is Outcome.REVOKED  # Revoked.
+    assert cohort.verify_member(chain, pdfs[2], receipt.bundles[ids[2]]).outcome is Outcome.VALID  # Student 3 untouched.

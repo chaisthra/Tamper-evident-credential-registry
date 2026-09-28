@@ -4,6 +4,7 @@ pragma solidity 0.8.24; // Pin one exact compiler version so every build produce
 
 // Import OpenZeppelin's audited role system instead of writing our own access control (fewer bugs to explain).
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {Sha256Merkle} from "./Sha256Merkle.sol"; // Our small Merkle-proof checker (stretch goal: a whole cohort under one root).
 
 /// @title CredentialRegistry
 /// @notice Stores only fingerprints of degree certificates so anyone can check a PDF they were handed.
@@ -31,10 +32,27 @@ contract CredentialRegistry is AccessControl { // Inherit AccessControl to get g
     /// @dev docHash (SHA-256 of the PDF bytes) => its record. Private so reads go through verify().
     mapping(bytes32 => Credential) private _credentials; // A mapping gives O(1) lookup by hash with no loops (no unbounded gas).
 
+    /// @notice One cohort issued with a single transaction: only its Merkle root is stored.
+    struct Batch {          // Per-root record.
+        address issuer;     // Registrar who issued the cohort; only they may revoke members.
+        uint64 issuedAt;    // Block timestamp of the batch issue.
+        uint32 size;        // Number of members, for display and auditing only.
+    } // end of struct Batch
+
+    /// @dev Merkle root => batch record. issuedAt == 0 means "no such batch".
+    mapping(bytes32 => Batch) private _batches; // One storage write for a whole cohort instead of one per student.
+    /// @dev Merkle root => leaf hash => revocation time; lets one member be revoked without touching the others.
+    mapping(bytes32 => mapping(bytes32 => uint64)) private _memberRevokedAt; // 0 = not revoked.
+
     /// @notice Emitted when a registrar issues a credential; lets anyone rebuild history from logs.
     event CredentialIssued(bytes32 indexed docHash, bytes32 indexed subjectHash, address indexed issuer, uint64 issuedAt);
     /// @notice Emitted when a credential is revoked; reasonCode is a hash of the off-chain reason text.
     event CredentialRevoked(bytes32 indexed docHash, address indexed revoker, bytes32 reasonCode, uint64 revokedAt);
+
+    /// @notice Emitted when a registrar issues a cohort under one Merkle root.
+    event BatchIssued(bytes32 indexed root, address indexed issuer, uint32 size, uint64 issuedAt);
+    /// @notice Emitted when one member of a cohort is revoked.
+    event BatchMemberRevoked(bytes32 indexed root, bytes32 indexed leaf, address indexed revoker, bytes32 reasonCode, uint64 revokedAt);
 
     error ZeroAddress();              // Custom errors are cheaper than revert strings and are decoded by name in the client.
     error ZeroHash();                 // Rejects an all-zero hash, which would be indistinguishable from "empty".
@@ -42,6 +60,8 @@ contract CredentialRegistry is AccessControl { // Inherit AccessControl to get g
     error NotIssued(bytes32 docHash);      // Cannot revoke something that was never issued.
     error AlreadyRevoked(bytes32 docHash); // Revocation is one-way and happens once.
     error NotIssuer(bytes32 docHash, address caller); // One university cannot revoke another university's credential.
+    error EmptyBatch();            // A cohort must have at least one member.
+    error InvalidProof();          // The Merkle proof does not lead to the stored root.
 
     /// @notice Deploys the registry and makes `admin` the only account able to grant or remove registrars.
     /// @param admin Account that receives DEFAULT_ADMIN_ROLE (a multisig in production).
@@ -84,4 +104,57 @@ contract CredentialRegistry is AccessControl { // Inherit AccessControl to get g
     function verify(bytes32 docHash) external view returns (Credential memory) { // `view` = free to call, no transaction.
         return _credentials[docHash]; // Unknown hashes return an all-zero struct, i.e. status NONE.
     } // end of verify
+
+    /// @notice Issues a whole cohort by storing only the Merkle root of (docHash, subjectHash) leaves.
+    /// @param root Merkle root built off-chain by client/merkle.py.
+    /// @param size Number of members in the cohort (informational).
+    /// @dev Reverts: AccessControlUnauthorizedAccount; ZeroHash; EmptyBatch; AlreadyIssued (same root twice).
+    function issueBatch(bytes32 root, uint32 size) external onlyRole(REGISTRAR_ROLE) { // One transaction for N students.
+        if (root == bytes32(0)) revert ZeroHash(); // Refuse an empty root.
+        if (size == 0) revert EmptyBatch(); // Refuse an empty cohort.
+        if (_batches[root].issuedAt != 0) revert AlreadyIssued(root); // Same root cannot be issued twice.
+        uint64 nowTs = uint64(block.timestamp); // Read the block time once.
+        _batches[root] = Batch(msg.sender, nowTs, size); // Store issuer, time, size.
+        emit BatchIssued(root, msg.sender, size, nowTs); // Audit trail.
+    } // end of issueBatch
+
+    /// @notice Revokes one member of a cohort; the rest of the cohort stays valid.
+    /// @param root The cohort's Merkle root.
+    /// @param docHash SHA-256 of the member's PDF.
+    /// @param subjectHash The member's salted student-id hash.
+    /// @param proof Sibling hashes proving membership.
+    /// @param reasonCode Hash of the off-chain reason text.
+    /// @dev Reverts: AccessControlUnauthorizedAccount; NotIssued; NotIssuer; InvalidProof; AlreadyRevoked.
+    function revokeBatchMember(
+        bytes32 root, bytes32 docHash, bytes32 subjectHash, bytes32[] calldata proof, bytes32 reasonCode
+    ) external onlyRole(REGISTRAR_ROLE) { // Parameters split over lines for readability.
+        Batch storage batch = _batches[root]; // Pointer to the stored batch.
+        if (batch.issuedAt == 0) revert NotIssued(root); // Unknown cohort.
+        if (batch.issuer != msg.sender) revert NotIssuer(root, msg.sender); // Only the issuing registrar.
+        bytes32 leafHash = Sha256Merkle.leaf(docHash, subjectHash); // Rebuild the member's leaf.
+        if (!Sha256Merkle.verify(proof, root, leafHash)) revert InvalidProof(); // Must really be a member.
+        if (_memberRevokedAt[root][leafHash] != 0) revert AlreadyRevoked(docHash); // Revoke once only.
+        uint64 nowTs = uint64(block.timestamp); // Same time for storage and event.
+        _memberRevokedAt[root][leafHash] = nowTs; // Mark just this member as revoked.
+        emit BatchMemberRevoked(root, leafHash, msg.sender, reasonCode, nowTs); // Audit trail.
+    } // end of revokeBatchMember
+
+    /// @notice Checks a cohort member: NONE if the root is unknown or the proof fails, else VALID or REVOKED.
+    /// @param root The cohort's Merkle root (from the student's proof bundle).
+    /// @param docHash SHA-256 of the PDF being checked.
+    /// @param subjectHash Salted student-id hash from the bundle.
+    /// @param proof Sibling hashes from the bundle.
+    /// @return A Credential struct in the same shape as verify(), so the client treats both paths alike.
+    function verifyBatchMember(
+        bytes32 root, bytes32 docHash, bytes32 subjectHash, bytes32[] calldata proof
+    ) external view returns (Credential memory) { // Free read.
+        Batch memory batch = _batches[root]; // Copy the batch record into memory.
+        bytes32 leafHash = Sha256Merkle.leaf(docHash, subjectHash); // Leaf for this PDF + subject.
+        if (batch.issuedAt == 0 || !Sha256Merkle.verify(proof, root, leafHash)) { // Unknown cohort or not a member...
+            return Credential(bytes32(0), address(0), 0, 0, Status.NONE); // ...reads exactly like an unknown document.
+        } // end of if
+        uint64 revokedAt = _memberRevokedAt[root][leafHash]; // 0 if still valid.
+        Status status = revokedAt == 0 ? Status.VALID : Status.REVOKED; // Derive the status.
+        return Credential(subjectHash, batch.issuer, batch.issuedAt, revokedAt, status); // Same shape as verify().
+    } // end of verifyBatchMember
 } // end of contract CredentialRegistry

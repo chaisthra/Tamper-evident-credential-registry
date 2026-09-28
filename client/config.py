@@ -22,6 +22,8 @@ DEFAULT_ACTOR = "registrar"  # Who sends issue/revoke when the CLI is not told o
 SALT_BYTES = 32  # 256-bit random salt per student: far too many values to brute-force.
 HASH_BYTES = 32  # SHA-256 output size; matches Solidity bytes32.
 READ_CHUNK_BYTES = 64 * 1024  # Hash files in 64 KiB pieces so large PDFs do not need to fit in memory.
+MERKLE_LEAF_PREFIX = b"\x00"  # Must equal LEAF_PREFIX in contracts/Sha256Merkle.sol.
+MERKLE_NODE_PREFIX = b"\x01"  # Must equal NODE_PREFIX in contracts/Sha256Merkle.sol.
 TX_TIMEOUT_SECONDS = 30  # How long to wait for a transaction to be mined before giving up.
 
 EXIT_OK = 0  # CLI exit code: verification VALID or command succeeded.

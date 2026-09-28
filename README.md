@@ -25,6 +25,7 @@ Demo (two terminals):
 ```bash
 make node        # terminal 1: local chain on http://127.0.0.1:8545, leave running
 make demo        # terminal 2: fresh deploy, then issue -> verify -> tamper -> revoke -> reject
+make demo-cohort # terminal 2: stretch goal - 3 students under one Merkle root, revoke one, others stay valid
 ```
 
 Optional: `cp .env.example .env` to change the RPC URL. The defaults work without it.
@@ -48,6 +49,11 @@ REJECTED by contract: AccessControlUnauthorizedAccount
 python3 -m client.cli issue  <pdf> --student-id <id> [--as registrar|admin|outsider]
 python3 -m client.cli verify <pdf> [--student-id <id> --salt <hex>]   # ownership check is optional
 python3 -m client.cli revoke <pdf> --reason "<text>" [--as ...]
+
+# Stretch goal: a whole cohort under one Merkle root (manifest CSV columns: pdf,student_id)
+python3 -m client.cli issue-cohort docs/samples/cohort_2024.csv --out build/bundles
+python3 -m client.cli verify <pdf> --bundle build/bundles/<id>.json [--student-id <id>]
+python3 -m client.cli revoke <pdf> --bundle build/bundles/<id>.json --reason "<text>"
 ```
 
 Exit codes: `0` = OK or VALID, `1` = not registered or revoked, `2` = rejected by the contract.
@@ -55,18 +61,23 @@ Exit codes: `0` = OK or VALID, `1` = not registered or revoked, `2` = rejected b
 ## Layout
 
 ```
-contracts/CredentialRegistry.sol   on-chain rules: roles, issue, revoke, verify
+contracts/CredentialRegistry.sol   on-chain rules: roles, issue, revoke, verify, cohort batch functions
+contracts/Sha256Merkle.sol         Merkle proof check (SHA-256, sorted pairs, leaf/node prefixes)
 scripts/deploy.js                  deploy + grant REGISTRAR_ROLE, writes deployments/<network>.json
-scripts/demo.sh, scripts/tamper.py scripted demo and one-byte forgery helper
+scripts/demo.sh, demo_cohort.sh    scripted demos
+scripts/tamper.py                  one-byte forgery helper
 client/config.py                   every constant and setting (M4)
 client/models.py                   plain data types shared by layers
 client/hashing.py                  SHA-256 of files, salted student-id hash, reason codes
 client/chain.py                    the only module that imports web3 (M3)
 client/domain.py                   issue / verify / revoke rules, no web3
+client/merkle.py, client/cohort.py Merkle tree + proofs; cohort issue / verify / revoke
 client/cli.py                      argument parsing and printing
 tests/contract/                    Hardhat tests (in-process chain)
 tests/client/                      pytest tests (in-memory fake chain)
-docs/samples/                      fictional certificate PDFs
+docs/samples/                      fictional certificate PDFs + cohort manifest
+docs/slides/                       7-slide deck (.pptx + .pdf)
+DESIGN.md, AI_USAGE.md             design rationale, rejected options, threats; AI declaration
 ```
 
 ## Known limits
